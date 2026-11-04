@@ -52,9 +52,13 @@ if [[ ! -d "$TILEIR_SITE/triton" ]]; then
     --target "$TILEIR_SITE" "$tmp_dir/$TILEIR_WHEEL"
 fi
 
-"$VENV_DIR/bin/python" -m pip freeze >"$REPO_ROOT/requirements.lock"
+"$VENV_DIR/bin/python" -m pip install --no-cache-dir --no-deps -e "$REPO_ROOT"
+
+"$VENV_DIR/bin/python" -m pip freeze --exclude-editable >"$REPO_ROOT/requirements.lock"
 
 echo
 echo "Environment ready. Next:"
 echo "  source $VENV_DIR/bin/activate"
 echo "  python probes/run.py"
+echo "  pytest"
+echo "  python -m tilebench"

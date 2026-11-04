@@ -1,0 +1,17 @@
+[build-system]
+# hatchling, because setuptools writes egg-info into the source tree and then changes its
+# permissions, which fails on /mnt/c where this repository lives.
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tilebench"
+version = "0.1.0"
+description = "Compare cuTile and Triton (PTX and Tile IR backends) on the same kernels."
+requires-python = ">=3.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tilebench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
