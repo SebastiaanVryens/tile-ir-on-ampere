@@ -1,4 +1,4 @@
-# CUDA Tile backend comparison
+# Tile IR on Ampere: cuTile and Triton compared
 
 This project writes the same GPU kernels three ways: cuTile Python, Triton on the PTX backend, and Triton on the CUDA Tile IR backend. PyTorch is the reference for correctness and performance.
 The goal is to understand how each path compiles, not only which one is faster.
