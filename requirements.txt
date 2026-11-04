@@ -1,0 +1,10 @@
+# Direct dependencies. requirements.lock records the full resolved set.
+torch==2.15.0
+cuda-tile==1.7.0
+
+# Pinned directly instead of through cuda-tile[tileiras]. torch 2.15 holds cuda-toolkit at
+# 13.2.2, so that extra resolves to tileiras 13.2, while the Triton Tile IR wheel bundles
+# 13.4. Comparing the two front ends needs them on the same compiler release.
+nvidia-cuda-tileiras==13.4.92
+nvidia-cuda-nvcc==13.4.92
+nvidia-nvvm==13.4.92
