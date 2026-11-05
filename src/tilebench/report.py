@@ -73,7 +73,8 @@ def best_rows(records: Iterable[Record]) -> list[Row]:
         key = (row.workload, row.size, row.variant)
         if key not in best or row.gpu_ms.median < best[key].gpu_ms.median:
             best[key] = row
-    return sorted(best.values(), key=lambda row: (row.workload, row.size, row.variant))
+    # Reversed so that 2D sizes read in order of row length, the dimension that matters.
+    return sorted(best.values(), key=lambda row: (row.workload, row.size[::-1], row.variant))
 
 
 def gpu_state_note(records: Sequence[Record]) -> str:
@@ -95,11 +96,11 @@ def format_table(rows: Sequence[Row]) -> str:
             size = "x".join(str(dim) for dim in row.size)
             lines.append(f"\n{row.workload}  size={size}")
             lines.append(
-                f"  {'variant':<26}{'median_us':>11}{'iqr_us':>9}"
+                f"  {'variant':<33}{'median_us':>11}{'iqr_us':>9}"
                 f"{row.rate_unit:>9}{'drift%':>8}  config"
             )
         lines.append(
-            f"  {row.variant:<26}{row.gpu_ms.median * 1e3:>11.1f}{row.gpu_ms.iqr * 1e3:>9.1f}"
+            f"  {row.variant:<33}{row.gpu_ms.median * 1e3:>11.1f}{row.gpu_ms.iqr * 1e3:>9.1f}"
             f"{row.rate:>9.1f}{row.drift_pct:>8.1f}  {row.config}"
         )
     lines.append(f"\n{TIMER_NOTE}")

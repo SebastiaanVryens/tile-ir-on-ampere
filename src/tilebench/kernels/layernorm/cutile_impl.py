@@ -1,0 +1,88 @@
+"""cuTile layer norm, with the same two strategies as the Triton version.
+
+cuTile has one load style, so there is no pointer or descriptor split here.
+"""
+
+import functools
+from typing import Any
+
+import cuda.tile as ct
+import torch
+
+from tilebench.kernels.layernorm import EPS, loop_blocks, whole_row_block
+from tilebench.workload import Config, Inputs, Prepared, Size
+
+ZERO = ct.PaddingMode.ZERO
+OCCUPANCIES = (None, 1, 2, 4, 8)
+
+
+def whole(x, w, b, y, eps, tile: ct.Constant[int]):
+    bid = ct.bid(0)
+    n = x.shape[1]
+    row = ct.astype(ct.load(x, index=(bid, 0), shape=(1, tile), padding_mode=ZERO), ct.float32)
+    mean = ct.sum(row, axis=1) / n
+    mask = ct.arange(tile, dtype=ct.int32) < n
+    centered = ct.where(mask, row - mean, 0)
+    rstd = 1 / ct.sqrt(ct.sum(centered * centered, axis=1) / n + eps)
+    w_tile = ct.astype(ct.load(w, index=(0,), shape=(tile,), padding_mode=ZERO), ct.float32)
+    b_tile = ct.astype(ct.load(b, index=(0,), shape=(tile,), padding_mode=ZERO), ct.float32)
+    ct.store(y, index=(bid, 0), tile=ct.astype(centered * rstd * w_tile + b_tile, y.dtype))
+
+
+def looped(x, w, b, y, eps, tile: ct.Constant[int]):
+    bid = ct.bid(0)
+    n = x.shape[1]
+    num_tiles = ct.num_tiles(x, axis=1, shape=(1, tile))
+
+    total = ct.full((1, tile), 0, dtype=ct.float32)
+    for j in range(num_tiles):
+        total += ct.astype(ct.load(x, index=(bid, j), shape=(1, tile), padding_mode=ZERO), ct.float32)
+    mean = ct.sum(total, axis=1) / n
+
+    squares = ct.full((1, tile), 0, dtype=ct.float32)
+    for j in range(num_tiles):
+        row = ct.astype(ct.load(x, index=(bid, j), shape=(1, tile), padding_mode=ZERO), ct.float32)
+        mask = (j * tile + ct.arange(tile, dtype=ct.int32)) < n
+        centered = ct.where(mask, row - mean, 0)
+        squares += centered * centered
+    rstd = 1 / ct.sqrt(ct.sum(squares, axis=1) / n + eps)
+
+    for j in range(num_tiles):
+        row = ct.astype(ct.load(x, index=(bid, j), shape=(1, tile), padding_mode=ZERO), ct.float32)
+        w_tile = ct.astype(ct.load(w, index=(j,), shape=(tile,), padding_mode=ZERO), ct.float32)
+        b_tile = ct.astype(ct.load(b, index=(j,), shape=(tile,), padding_mode=ZERO), ct.float32)
+        result = (row - mean) * rstd * w_tile + b_tile
+        ct.store(y, index=(bid, j), tile=ct.astype(result, y.dtype))
+
+
+BODIES = {"whole": whole, "looped": looped}
+
+
+@functools.cache
+def build_kernel(style: str, occupancy: int | None) -> Any:
+    """Build each variant once, because every new kernel object compiles again."""
+    return ct.kernel(BODIES[style], occupancy=occupancy)
+
+
+def configs(backend: str, size: Size) -> tuple[Config, ...]:
+    _, cols = size
+    tiles = {"whole": (whole_row_block(cols),), "looped": loop_blocks(cols)}
+    return tuple(
+        {"style": style, "tile": tile, "occupancy": occupancy}
+        for style, style_tiles in tiles.items()
+        for tile in style_tiles
+        for occupancy in OCCUPANCIES
+    )
+
+
+def prepare(inputs: Inputs, config: Config) -> Prepared:
+    x, weight, bias = inputs
+    y = torch.empty_like(x)
+    kernel = build_kernel(config["style"], config["occupancy"])
+    args = (x, weight, bias, y, EPS, config["tile"])
+    grid = (x.shape[0], 1, 1)
+
+    def launch() -> None:
+        ct.launch(torch.cuda.current_stream(), grid, kernel, args)
+
+    return Prepared(launch, y)
