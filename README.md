@@ -7,11 +7,12 @@ The goal is to understand how each path compiles, not only which one is faster.
 
 - [x] Pinned environment
 - [x] Probe: every path compiles and runs correctly on sm_86
-- [ ] Benchmark harness
-- [ ] Kernels: vector add, fused softmax or layernorm, tiled GEMM
+- [x] Benchmark harness
+- [x] Kernel: vector add
+- [ ] Kernels: fused softmax or layernorm, tiled GEMM
 - [ ] Tensor-of-pointer investigation
 
-There are no performance results yet.
+The vector add results below validate the harness, but they do not separate the backends yet.
 
 ## Test setup
 
@@ -34,7 +35,11 @@ You need WSL2 Ubuntu 24.04 with the GPU visible to `nvidia-smi`, and about 15 GB
 bash scripts/setup_wsl.sh
 source ~/.venvs/cutile/bin/activate
 python probes/run.py
+pytest
+python -m tilebench
 ```
+
+`python -m tilebench` prints a comparison table and saves the raw timings in `results/`.
 
 ## Probe results
 
@@ -68,3 +73,21 @@ cutile          matmul              PASS   cutile   -        -
 `ptr / view loads` counts the `load_ptr_tko` and `load_view_tko` operations in the generated Tile IR.
 
 The Triton Tile IR release notes list validation on B200. These small cases also ran correctly on sm_86, which is a much narrower check than that validation.
+
+## Vector add results
+
+Vector add is limited by memory bandwidth, so it checks the benchmark harness rather than the compilers. Throughput in GB/s:
+
+| Elements | PyTorch | cuTile | Triton PTX, pointer | Triton PTX, descriptor | Triton Tile IR, pointer | Triton Tile IR, descriptor |
+|---|---|---|---|---|---|---|
+| 2^16 | 109.7 | 109.7 | 109.7 | 109.7 | 109.7 | 109.7 |
+| 2^20 | 285.8 | 279.7 | 285.8 | 285.6 | 285.8 | 292.6 |
+| 2^22 | 307.2 | 307.2 | 307.2 | 307.2 | 307.2 | 307.2 |
+| 2^24 | 314.3 | 314.6 | 314.1 | 314.6 | 314.1 | 314.6 |
+| 2^26 | 316.1 | 316.3 | 316.1 | 316.1 | 316.1 | 315.7 |
+
+Each value is the median of 300 launches across 3 rounds, using the best configuration for that path and size. Every size is checked against PyTorch first, and the L2 cache is cleared before each launch.
+
+All paths reach about 316 GB/s at the largest size, roughly 94% of the card's ~336 GB/s specification. The spread at 2^20 is timer noise: those kernels take 43 to 45 us, and the timer moves in steps of about 1 us.
+
+Pointer and descriptor loads match because memory bandwidth is the limit, so this says nothing yet about the tensor-of-pointer slowdown. During the run, the SM clock ranged from 1702 to 2010 MHz and the GPU temperature from 51 to 87 C.
