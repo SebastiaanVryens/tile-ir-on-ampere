@@ -15,10 +15,12 @@ class Prepared(NamedTuple):
     """A launch with its output already allocated, so timing excludes allocation.
 
     Triton launches must return the compiled kernel, which proves the backend used.
+    cuTile launches return nothing, so tile_kernel holds the kernel and its arguments.
     """
 
     launch: Callable[[], Any]
     output: torch.Tensor
+    tile_kernel: tuple[Any, tuple[Any, ...]] | None = None
 
 
 class Impl(Protocol):

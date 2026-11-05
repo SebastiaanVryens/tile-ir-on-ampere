@@ -115,11 +115,16 @@ KERNELS = {
     "looped/descriptor": looped_descriptor,
 }
 
-# Each backend sweeps its own knob: Tile IR accepts num_warps but does not act on it, and
-# its occupancy hint is what sizes the shared memory pipeline in the looped kernels.
+# Triton's num_warps becomes the Tile IR hint num_worker_warps_per_cta, and tileiras 13.4
+# stops at 8 warps, so 16 and 32 would only repeat a kernel. The occupancy hint sets the
+# register budget and sizes the shared memory pipeline in the looped pointer kernels.
 KNOBS = {
     "cuda": tuple({"num_warps": warps} for warps in (4, 8, 16, 32)),
-    "tileir": tuple({"occupancy": occupancy} for occupancy in (1, 2, 4, 8)),
+    "tileir": tuple(
+        {"num_warps": warps, "occupancy": occupancy}
+        for warps in (4, 8)
+        for occupancy in (1, 2, 4, 8)
+    ),
 }
 
 

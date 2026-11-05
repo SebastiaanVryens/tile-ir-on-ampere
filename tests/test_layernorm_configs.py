@@ -1,4 +1,4 @@
-from tilebench.kernels.layernorm import loop_blocks, triton_impl, whole_row_block
+from tilebench.kernels.layernorm import cutile_impl, loop_blocks, triton_impl, whole_row_block
 
 
 def test_whole_row_block_is_the_next_power_of_two() -> None:
@@ -26,6 +26,18 @@ def test_aligned_rows_try_every_style() -> None:
     assert styles == set(triton_impl.KERNELS)
 
 
-def test_each_backend_sweeps_its_own_knob() -> None:
-    assert all("num_warps" in config for config in triton_impl.configs("cuda", (2, 1024)))
-    assert all("occupancy" in config for config in triton_impl.configs("tileir", (2, 1024)))
+def test_ptx_sweeps_warps_only() -> None:
+    configs = triton_impl.configs("cuda", (2, 1024))
+    assert {config["num_warps"] for config in configs} == {4, 8, 16, 32}
+    assert not any("occupancy" in config for config in configs)
+
+
+def test_tile_ir_sweeps_warps_and_occupancy() -> None:
+    configs = triton_impl.configs("tileir", (2, 1024))
+    assert {config["num_warps"] for config in configs} == {4, 8}
+    assert {config["occupancy"] for config in configs} == {1, 2, 4, 8}
+
+
+def test_cutile_tries_the_compiler_choice_and_eight_warps() -> None:
+    configs = cutile_impl.configs("cutile", (2, 1024))
+    assert {config["num_worker_warps"] for config in configs} == {None, 8}

@@ -25,8 +25,9 @@ def prepare(inputs: Inputs, config: Config) -> Prepared:
     c = torch.empty_like(a)
     tile = config["tile"]
     grid = (ct.cdiv(a.numel(), tile), 1, 1)
+    args = (a, b, c, tile)
 
     def launch() -> None:
-        ct.launch(torch.cuda.current_stream(), grid, add_kernel, (a, b, c, tile))
+        ct.launch(torch.cuda.current_stream(), grid, add_kernel, args)
 
-    return Prepared(launch, c)
+    return Prepared(launch, c, (add_kernel, args))

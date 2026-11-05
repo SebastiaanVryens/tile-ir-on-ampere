@@ -14,6 +14,8 @@ from tilebench.workload import Config, Inputs, Prepared, Size
 
 ZERO = ct.PaddingMode.ZERO
 OCCUPANCIES = (None, 1, 2, 4, 8)
+# None leaves the choice to the compiler, which picked 4 here. tileiras 13.4 accepts 4 or 8.
+WORKER_WARPS = (None, 8)
 
 
 def whole(x, w, b, y, eps, tile: ct.Constant[int]):
@@ -59,30 +61,31 @@ BODIES = {"whole": whole, "looped": looped}
 
 
 @functools.cache
-def build_kernel(style: str, occupancy: int | None) -> Any:
+def build_kernel(style: str, occupancy: int | None, num_worker_warps: int | None) -> Any:
     """Build each variant once, because every new kernel object compiles again."""
-    return ct.kernel(BODIES[style], occupancy=occupancy)
+    return ct.kernel(BODIES[style], occupancy=occupancy, num_worker_warps=num_worker_warps)
 
 
 def configs(backend: str, size: Size) -> tuple[Config, ...]:
     _, cols = size
     tiles = {"whole": (whole_row_block(cols),), "looped": loop_blocks(cols)}
     return tuple(
-        {"style": style, "tile": tile, "occupancy": occupancy}
+        {"style": style, "tile": tile, "occupancy": occupancy, "num_worker_warps": warps}
         for style, style_tiles in tiles.items()
         for tile in style_tiles
         for occupancy in OCCUPANCIES
+        for warps in WORKER_WARPS
     )
 
 
 def prepare(inputs: Inputs, config: Config) -> Prepared:
     x, weight, bias = inputs
     y = torch.empty_like(x)
-    kernel = build_kernel(config["style"], config["occupancy"])
+    kernel = build_kernel(config["style"], config["occupancy"], config["num_worker_warps"])
     args = (x, weight, bias, y, EPS, config["tile"])
     grid = (x.shape[0], 1, 1)
 
     def launch() -> None:
         ct.launch(torch.cuda.current_stream(), grid, kernel, args)
 
-    return Prepared(launch, y)
+    return Prepared(launch, y, (kernel, args))
