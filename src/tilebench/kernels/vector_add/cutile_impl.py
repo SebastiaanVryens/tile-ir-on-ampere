@@ -3,7 +3,7 @@
 import cuda.tile as ct
 import torch
 
-from tilebench.workload import Config, Inputs, Prepared
+from tilebench.workload import Config, Inputs, Prepared, Size
 
 TILES = (1024, 4096)
 
@@ -16,7 +16,7 @@ def add_kernel(a, b, c, tile: ct.Constant[int]):
     ct.store(c, index=(pid,), tile=a_tile + b_tile)
 
 
-def configs(backend: str) -> tuple[Config, ...]:
+def configs(backend: str, size: Size) -> tuple[Config, ...]:
     return tuple({"tile": tile} for tile in TILES)
 
 

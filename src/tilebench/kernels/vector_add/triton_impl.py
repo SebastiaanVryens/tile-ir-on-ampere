@@ -6,7 +6,7 @@ import torch
 import triton
 import triton.language as tl
 
-from tilebench.workload import Config, Inputs, Prepared
+from tilebench.workload import Config, Inputs, Prepared, Size
 
 
 @triton.jit
@@ -40,7 +40,7 @@ def scratch_alloc(size: int, alignment: int, stream: int | None) -> torch.Tensor
 triton.set_allocator(scratch_alloc)
 
 
-def configs(backend: str) -> tuple[Config, ...]:
+def configs(backend: str, size: Size) -> tuple[Config, ...]:
     return tuple(
         {"style": style, "block": block, "num_warps": num_warps}
         for style in KERNELS

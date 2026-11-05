@@ -2,10 +2,10 @@
 
 import torch
 
-from tilebench.workload import Config, Inputs, Prepared
+from tilebench.workload import Config, Inputs, Prepared, Size
 
 
-def configs(backend: str) -> tuple[Config, ...]:
+def configs(backend: str, size: Size) -> tuple[Config, ...]:
     return ({},)
 
 

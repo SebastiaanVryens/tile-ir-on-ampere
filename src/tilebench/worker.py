@@ -53,14 +53,14 @@ def verified(
 
 def check(workload: Workload, impl: Impl, target: Target) -> None:
     for size in workload.check_sizes + workload.sizes:
-        for config in impl.configs(target.backend):
+        for config in impl.configs(target.backend, size):
             verified(workload, impl, target, size, config)
 
 
 def bench(workload: Workload, impl: Impl, target: Target) -> list[dict[str, Any]]:
     records = []
     for size in workload.sizes:
-        for config in impl.configs(target.backend):
+        for config in impl.configs(target.backend, size):
             prepared = verified(workload, impl, target, size, config)
             gpu_ms = measure_gpu_ms(prepared.launch)
             state = gpu_state()
