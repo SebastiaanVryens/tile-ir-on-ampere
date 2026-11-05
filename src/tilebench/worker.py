@@ -1,7 +1,8 @@
 """Run one target on one workload in this process.
 
 Launched with the environment from targets.worker_env, because the backend is fixed when
-Triton is imported. --check verifies correctness only; otherwise results go to --out.
+Triton is imported. --check verifies correctness only, and --inspect-size saves what the
+compiler produced for one size. Otherwise this benchmarks. Results go to --out.
 """
 
 import argparse
@@ -12,6 +13,7 @@ from typing import Any, cast
 
 import torch
 
+from tilebench.artifacts import config_slug, inspect_build
 from tilebench.system import gpu_state
 from tilebench.targets import Target, get_target
 from tilebench.timing import measure_gpu_ms
@@ -80,11 +82,31 @@ def bench(workload: Workload, impl: Impl, target: Target) -> list[dict[str, Any]
     return records
 
 
+def parse_size(text: str) -> Size:
+    return tuple(int(dim) for dim in text.split("x"))
+
+
+def inspect_kernels(
+    workload: Workload, impl: Impl, target: Target, size: Size, style: str, artifact_dir: Path
+) -> list[dict[str, Any]]:
+    records = []
+    for config in impl.configs(target.backend, size):
+        if style in config.get("style", ""):
+            prepared = verified(workload, impl, target, size, config)
+            directory = artifact_dir / target.name / config_slug(config)
+            summary = inspect_build(target, prepared, directory)
+            records.append({"target": target.name, "config": config} | summary)
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
     parser.add_argument("--workload", required=True)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--inspect-size", type=parse_size)
+    parser.add_argument("--style", default="")
+    parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
@@ -93,6 +115,11 @@ def main() -> None:
     impl = load_impl(args.workload, target)
     if args.check:
         check(workload, impl, target)
+    elif args.inspect_size:
+        records = inspect_kernels(
+            workload, impl, target, args.inspect_size, args.style, args.artifacts
+        )
+        args.out.write_text(json.dumps(records))
     else:
         args.out.write_text(json.dumps(bench(workload, impl, target)))
 

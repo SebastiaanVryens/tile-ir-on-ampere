@@ -5,11 +5,15 @@ every target runs in its own process. This module avoids importing torch or trit
 the parent process can use it safely.
 """
 
+import json
 import os
+import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 TILEIR_SITE = Path(sys.prefix) / "opt" / "triton_tileir"
 
@@ -53,3 +57,23 @@ def worker_env(target: Target, base: Mapping[str, str] | None = None) -> dict[st
     env = {key: value for key, value in source.items() if key not in SCRUBBED_ENV}
     env.update(target.env)
     return env
+
+
+def run_worker(target: Target, workload: str, *options: str) -> list[dict[str, Any]]:
+    """Run tilebench.worker for one target and return the records it wrote."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out = Path(tmp_dir) / "records.json"
+        command = [
+            sys.executable,
+            "-m",
+            "tilebench.worker",
+            "--target",
+            target.name,
+            "--workload",
+            workload,
+            "--out",
+            str(out),
+            *options,
+        ]
+        subprocess.run(command, env=worker_env(target), check=True)
+        return json.loads(out.read_text())

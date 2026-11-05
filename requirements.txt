@@ -9,6 +9,9 @@ nvidia-cuda-tileiras==13.4.92
 nvidia-cuda-nvcc==13.4.92
 nvidia-nvvm==13.4.92
 
+# Used directly to ask the driver about occupancy. torch already depends on it.
+cuda-bindings==13.4.4
+
 # torch warns at import without numpy, even though nothing here calls it directly.
 numpy==2.5.4
 pytest==9.2.0
