@@ -1,4 +1,10 @@
-from tilebench.kernels.layernorm import cutile_impl, loop_blocks, triton_impl, whole_row_block
+from tilebench.kernels.layernorm import (
+    LATENCY_HINTS,
+    cutile_impl,
+    loop_blocks,
+    triton_impl,
+    whole_row_block,
+)
 
 
 def test_whole_row_block_is_the_next_power_of_two() -> None:
@@ -29,7 +35,7 @@ def test_aligned_rows_try_every_style() -> None:
 def test_ptx_sweeps_warps_only() -> None:
     configs = triton_impl.configs("cuda", (2, 1024))
     assert {config["num_warps"] for config in configs} == {4, 8, 16, 32}
-    assert not any("occupancy" in config for config in configs)
+    assert not any("occupancy" in config or "num_stages" in config for config in configs)
 
 
 def test_tile_ir_sweeps_warps_and_occupancy() -> None:
@@ -41,3 +47,17 @@ def test_tile_ir_sweeps_warps_and_occupancy() -> None:
 def test_cutile_tries_the_compiler_choice_and_eight_warps() -> None:
     configs = cutile_impl.configs("cutile", (2, 1024))
     assert {config["num_worker_warps"] for config in configs} == {None, 8}
+
+
+def test_both_tile_ir_paths_sweep_the_same_latency_hints() -> None:
+    triton_hints = {config["num_stages"] for config in triton_impl.configs("tileir", (2, 1024))}
+    cutile_hints = {config["latency"] for config in cutile_impl.configs("cutile", (2, 1024))}
+    assert triton_hints == set(LATENCY_HINTS)
+    assert cutile_hints == {None, *LATENCY_HINTS}
+
+
+def test_every_strategy_gets_the_latency_sweep() -> None:
+    configs = triton_impl.configs("tileir", (2, 1024))
+    for style in triton_impl.KERNELS:
+        hints = {config["num_stages"] for config in configs if config["style"] == style}
+        assert hints == set(LATENCY_HINTS)

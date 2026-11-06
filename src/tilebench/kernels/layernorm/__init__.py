@@ -16,6 +16,11 @@ TOTAL_ELEMENTS = 1 << 24
 ROW_LENGTHS = tuple(1 << power for power in range(10, 17))
 LOOP_BLOCKS = (1024, 4096)
 
+# The Tile IR latency hint, which accepts 1 to 10. Both Tile IR paths sweep the same values.
+# Its effect is large and uneven: one kernel at 32768 columns reached 258, 271, 299 and 222
+# GB/s at these four settings, so no single value is safe to fix.
+LATENCY_HINTS = (1, 3, 5, 10)
+
 # Descriptors need 16-byte aligned rows, which is 8 fp16 elements.
 DESCRIPTOR_ALIGNMENT = 8
 

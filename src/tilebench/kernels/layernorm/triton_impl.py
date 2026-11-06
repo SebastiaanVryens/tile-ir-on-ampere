@@ -13,6 +13,7 @@ import triton.language as tl
 from tilebench.kernels.layernorm import (
     DESCRIPTOR_ALIGNMENT,
     EPS,
+    LATENCY_HINTS,
     loop_blocks,
     whole_row_block,
 )
@@ -118,12 +119,15 @@ KERNELS = {
 # Triton's num_warps becomes the Tile IR hint num_worker_warps_per_cta, and tileiras 13.4
 # stops at 8 warps, so 16 and 32 would only repeat a kernel. The occupancy hint sets the
 # register budget and sizes the shared memory pipeline in the looped pointer kernels.
+# num_stages becomes the latency hint on every load and store. On PTX it left the SASS of
+# all four kernels unchanged, so sweeping it there would only repeat kernels too.
 KNOBS = {
     "cuda": tuple({"num_warps": warps} for warps in (4, 8, 16, 32)),
     "tileir": tuple(
-        {"num_warps": warps, "occupancy": occupancy}
+        {"num_warps": warps, "occupancy": occupancy, "num_stages": hint}
         for warps in (4, 8)
         for occupancy in (1, 2, 4, 8)
+        for hint in LATENCY_HINTS
     ),
 }
 
