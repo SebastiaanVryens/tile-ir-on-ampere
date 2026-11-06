@@ -1,6 +1,7 @@
 """cuTile layer norm, with the same two strategies as the Triton version.
 
-cuTile has one load style, so there is no pointer or descriptor split here.
+cuTile loads tiles with ct.load and single elements with ct.gather. The whole-row kernel
+uses both, which is why there is no pointer or descriptor split here.
 """
 
 import functools
@@ -27,14 +28,20 @@ def whole_body(latency: int | None) -> Callable[..., None]:
     def whole(x, w, b, y, eps, tile: ct.Constant[int]):
         bid = ct.bid(0)
         n = x.shape[1]
+        # Keep the mask above the load. Below it, tileiras 13.4 and 13.5 put each part of the
+        # row load behind a branch on sm_80 to sm_89, so the loads wait for one another.
+        cols = ct.arange(tile, dtype=ct.int32)
+        mask = cols < n
         row = ct.load(x, index=(bid, 0), shape=(1, tile), padding_mode=ZERO, latency=latency)
         row = ct.astype(row, ct.float32)
         mean = ct.sum(row, axis=1) / n
-        mask = ct.arange(tile, dtype=ct.int32) < n
         centered = ct.where(mask, row - mean, 0)
         rstd = 1 / ct.sqrt(ct.sum(centered * centered, axis=1) / n + eps)
-        w_tile = ct.load(w, index=(0,), shape=(tile,), padding_mode=ZERO, latency=latency)
-        b_tile = ct.load(b, index=(0,), shape=(tile,), padding_mode=ZERO, latency=latency)
+        # ct.load would check w and b against their own runtime shapes, which the compiler
+        # cannot tell equal n, and that about halves the loads in flight here. One shared
+        # mask avoids it, and covers the bounds as long as w and b have n elements.
+        w_tile = ct.gather(w, cols, mask=mask, check_bounds=False, latency=latency)
+        b_tile = ct.gather(b, cols, mask=mask, check_bounds=False, latency=latency)
         result = centered * rstd * ct.astype(w_tile, ct.float32) + ct.astype(b_tile, ct.float32)
         ct.store(y, index=(bid, 0), tile=ct.astype(result, y.dtype), latency=latency)
 
