@@ -1,8 +1,10 @@
 """Show what each compiler produced for one problem size.
 
 Example: python -m tilebench.inspection --workload layernorm --size 512x32768 --style whole
+         --where num_warps=8 num_stages=5
 
 Prints the launch resources of every configuration, and saves its IR, SASS and cubin.
+--where keeps exact matches, ignoring fields a target does not have.
 """
 
 import argparse
@@ -44,7 +46,12 @@ def format_inspection(records: Iterable[dict[str, Any]]) -> str:
 
 
 def inspect_targets(
-    targets: Sequence[str], workload: str, size: str, style: str, out_dir: Path
+    targets: Sequence[str],
+    workload: str,
+    size: str,
+    style: str,
+    where: Sequence[str],
+    out_dir: Path,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for name in targets:
@@ -58,6 +65,8 @@ def inspect_targets(
             style,
             "--artifacts",
             str(out_dir),
+            "--where",
+            *where,
         )
     return records
 
@@ -69,6 +78,7 @@ def main() -> int:
     parser.add_argument("--workload", required=True)
     parser.add_argument("--size", required=True, help="for example 512x32768")
     parser.add_argument("--style", default="", help="keep styles containing this text")
+    parser.add_argument("--where", nargs="*", default=[], metavar="KEY=VALUE")
     parser.add_argument("--targets", nargs="+", default=list(INSPECTABLE))
     parser.add_argument("--out-dir", type=Path)
     args = parser.parse_args()
@@ -78,7 +88,9 @@ def main() -> int:
         return 2
 
     out_dir = args.out_dir or Path("results") / "inspect" / f"{args.workload}_{args.size}"
-    records = inspect_targets(args.targets, args.workload, args.size, args.style, out_dir)
+    records = inspect_targets(
+        args.targets, args.workload, args.size, args.style, args.where, out_dir
+    )
     print(format_inspection(records))
     print(f"\nIR, SASS and cubin for each configuration: {out_dir}")
     return 0

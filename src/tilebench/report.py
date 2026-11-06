@@ -38,11 +38,15 @@ def config_label(config: dict[str, Any]) -> str:
     return " ".join(parts) or "-"
 
 
+def median_ms(record: Record) -> float:
+    return statistics.median(record["gpu_ms"])
+
+
 def summarize_rounds(records: Sequence[Record]) -> Row:
     """Pool one configuration across rounds; drift is how far the round medians spread."""
     first = records[0]
     gpu_ms = summarize([sample for record in records for sample in record["gpu_ms"]])
-    round_medians = [statistics.median(record["gpu_ms"]) for record in records]
+    round_medians = [median_ms(record) for record in records]
     return Row(
         workload=first["workload"],
         size=tuple(first["size"]),
@@ -55,8 +59,18 @@ def summarize_rounds(records: Sequence[Record]) -> Row:
     )
 
 
-def best_rows(records: Iterable[Record]) -> list[Row]:
-    """Keep the fastest configuration of each variant at each size."""
+def fastest_configs(records: Iterable[Record]) -> list[Record]:
+    """Keep the fastest record of each variant at each size."""
+    best: dict[tuple[Any, ...], Record] = {}
+    for record in records:
+        key = (record["workload"], tuple(record["size"]), variant_name(record))
+        if key not in best or median_ms(record) < median_ms(best[key]):
+            best[key] = record
+    return list(best.values())
+
+
+def pooled_rows(records: Iterable[Record]) -> list[Row]:
+    """Give each configuration one row, pooled across rounds."""
     groups: dict[tuple[Any, ...], list[Record]] = defaultdict(list)
     for record in records:
         key = (
@@ -67,23 +81,19 @@ def best_rows(records: Iterable[Record]) -> list[Row]:
         )
         groups[key].append(record)
 
-    best: dict[tuple[Any, ...], Row] = {}
-    for group in groups.values():
-        row = summarize_rounds(group)
-        key = (row.workload, row.size, row.variant)
-        if key not in best or row.gpu_ms.median < best[key].gpu_ms.median:
-            best[key] = row
+    rows = [summarize_rounds(group) for group in groups.values()]
     # Reversed so that 2D sizes read in order of row length, the dimension that matters.
-    return sorted(best.values(), key=lambda row: (row.workload, row.size[::-1], row.variant))
+    return sorted(rows, key=lambda row: (row.workload, row.size[::-1], row.variant))
 
 
 def gpu_state_note(records: Sequence[Record]) -> str:
     """Summarize the conditions of a run, because a laptop GPU slows down as it heats up."""
     clocks = [int(record["gpu_state"]["clocks.sm"]) for record in records]
-    temperatures = [int(record["gpu_state"]["temperature.gpu"]) for record in records]
+    starts = [record["start_temp"] for record in records]
+    ends = [int(record["gpu_state"]["temperature.gpu"]) for record in records]
     return (
-        f"SM clock {min(clocks)}-{max(clocks)} MHz, "
-        f"temperature {min(temperatures)}-{max(temperatures)} C across the run."
+        f"SM clock {min(clocks)}-{max(clocks)} MHz. Measurements started at "
+        f"{min(starts)}-{max(starts)} C and ended at {min(ends)}-{max(ends)} C."
     )
 
 

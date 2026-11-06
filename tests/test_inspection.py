@@ -14,7 +14,9 @@ needs_gpu = pytest.mark.skipif(shutil.which("nvidia-smi") is None, reason="needs
 
 def inspect(target: str, out_dir: Path, style: str = "whole") -> list[dict[str, Any]]:
     options = ("--inspect-size", "2x32768", "--style", style, "--artifacts", str(out_dir))
-    return run_worker(get_target(target), "layernorm", *options)
+    # One hint is enough to check the tool, and keeps these tests quick.
+    where = ("--where", "num_stages=3", "latency=3")
+    return run_worker(get_target(target), "layernorm", *options, *where)
 
 
 def test_table_shows_the_variant_and_its_resources() -> None:
