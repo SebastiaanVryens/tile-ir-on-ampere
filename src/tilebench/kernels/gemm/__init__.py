@@ -9,15 +9,34 @@ Sizes are (M, N, K), with A of shape (M, K) and B of shape (K, N).
 
 import torch
 
-from tilebench.workload import Inputs, Size, Workload
+from tilebench.workload import Config, Inputs, Size, Workload
 
 SQUARE_SIZES = (1024, 2048, 4096, 8192)
+FLOAT16_BYTES = 2
 
-# One shape is not square, so that swapping M and N cannot pass unnoticed.
-TILES = (
-    {"tile_m": 64, "tile_n": 64, "tile_k": 32},
-    {"tile_m": 128, "tile_n": 64, "tile_k": 32},
+# The Ampere matmul configurations of the Triton tutorial, numbers 1 to 8 and the 64-deep
+# tiles 14 to 16 (python/tutorials/03-matrix-multiplication.py). A published list keeps the
+# choice of tiles out of the comparison. Only Triton uses the warp counts, which are the
+# tutorial's own pairing for each tile.
+TUTORIAL_TILES = (
+    # tile_m, tile_n, tile_k, num_warps
+    (128, 256, 64, 8),
+    (64, 256, 32, 4),
+    (128, 128, 32, 4),
+    (128, 64, 32, 4),
+    (64, 128, 32, 4),
+    (128, 32, 32, 4),
+    (64, 32, 32, 2),
+    (32, 64, 32, 2),
+    (128, 64, 64, 4),
+    (64, 128, 64, 4),
+    (128, 32, 64, 4),
 )
+
+# Both Tile IR paths sweep the same values, which match layernorm's. Occupancy 4 capped
+# registers at 128 and spilled on 128x128 tiles in both, so the sweep stops at 2.
+LATENCY_HINTS = (1, 3, 5, 10)
+OCCUPANCIES = (1, 2)
 
 # Blocks walk the output in bands of this many block rows, so that blocks running at the
 # same time share tiles of B in L2. Every path uses the same order.
@@ -30,6 +49,10 @@ DESCRIPTOR_ALIGNMENT = 8
 # 70 C, 5 s bursts at 8192 reached 87 C and slowed for heat once the heatsink was warm.
 # From 60 C they peaked at 85 C, limited by power alone.
 START_TEMP_C = 60
+
+
+def tile_fields(tile_m: int, tile_n: int, tile_k: int) -> Config:
+    return {"tile_m": tile_m, "tile_n": tile_n, "tile_k": tile_k}
 
 
 def make_inputs(size: Size) -> Inputs:

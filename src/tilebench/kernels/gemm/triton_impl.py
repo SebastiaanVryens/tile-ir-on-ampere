@@ -10,7 +10,15 @@ import torch
 import triton
 import triton.language as tl
 
-from tilebench.kernels.gemm import DESCRIPTOR_ALIGNMENT, GROUP_ROWS, TILES
+from tilebench.kernels.gemm import (
+    DESCRIPTOR_ALIGNMENT,
+    FLOAT16_BYTES,
+    GROUP_ROWS,
+    LATENCY_HINTS,
+    OCCUPANCIES,
+    TUTORIAL_TILES,
+    tile_fields,
+)
 from tilebench.workload import Config, Inputs, Prepared, Size
 
 
@@ -69,6 +77,16 @@ def gemm_descriptor(
 
 KERNELS = {"pointer": gemm_pointer, "descriptor": gemm_descriptor}
 
+# On PTX, num_stages sets the depth of the async copy pipeline: from 1 to 5 stages, the
+# 128x128x32 kernel went from plain loads to 40 async copies and 64 KB of shared memory.
+PTX_STAGES = (2, 3, 4, 5)
+
+# The PTX backend keeps num_stages - 1 copies of both input tiles in shared memory, and
+# sm_86 allows 99 KB per block. 128x256x64 fit at 3 stages and asked for 144 KB at 4.
+SHARED_LIMIT_BYTES = 99 * 1024
+
+TILE_KEYS = ("style", "tile_m", "tile_n", "tile_k")
+
 
 def scratch_alloc(size: int, alignment: int, stream: int | None) -> torch.Tensor:
     return torch.empty(size, device="cuda", dtype=torch.int8)
@@ -77,11 +95,35 @@ def scratch_alloc(size: int, alignment: int, stream: int | None) -> torch.Tensor
 triton.set_allocator(scratch_alloc)
 
 
+def pipeline_bytes(tile_m: int, tile_n: int, tile_k: int, stages: int) -> int:
+    return (stages - 1) * (tile_m * tile_k + tile_k * tile_n) * FLOAT16_BYTES
+
+
+def knobs(backend: str, tile_m: int, tile_n: int, tile_k: int, warps: int) -> list[Config]:
+    if backend == "cuda":
+        return [
+            {"num_warps": warps, "num_stages": stages}
+            for stages in PTX_STAGES
+            if pipeline_bytes(tile_m, tile_n, tile_k, stages) <= SHARED_LIMIT_BYTES
+        ]
+    # On Tile IR, num_stages becomes the latency hint, and the compiler sizes the pipeline.
+    return [
+        {"num_warps": warps, "num_stages": hint, "occupancy": occupancy}
+        for hint in LATENCY_HINTS
+        for occupancy in OCCUPANCIES
+    ]
+
+
 def configs(backend: str, size: Size) -> tuple[Config, ...]:
     _, n, k = size
     aligned = n % DESCRIPTOR_ALIGNMENT == 0 and k % DESCRIPTOR_ALIGNMENT == 0
     styles = tuple(KERNELS) if aligned else ("pointer",)
-    return tuple({"style": style, **tile} for style in styles for tile in TILES)
+    return tuple(
+        {"style": style, **tile_fields(tile_m, tile_n, tile_k), **knob}
+        for style in styles
+        for tile_m, tile_n, tile_k, warps in TUTORIAL_TILES
+        for knob in knobs(backend, tile_m, tile_n, tile_k, warps)
+    )
 
 
 def prepare(inputs: Inputs, config: Config) -> Prepared:
@@ -91,11 +133,12 @@ def prepare(inputs: Inputs, config: Config) -> Prepared:
     c = torch.empty(m, n, device=a.device, dtype=a.dtype)
     kernel = KERNELS[config["style"]]
     tile_m, tile_n, tile_k = config["tile_m"], config["tile_n"], config["tile_k"]
+    options = {key: value for key, value in config.items() if key not in TILE_KEYS}
     grid = (triton.cdiv(m, tile_m) * triton.cdiv(n, tile_n),)
 
     def launch() -> Any:
         return kernel[grid](
-            a, b, c, m, n, k, BM=tile_m, BN=tile_n, BK=tile_k, GROUP=GROUP_ROWS
+            a, b, c, m, n, k, BM=tile_m, BN=tile_n, BK=tile_k, GROUP=GROUP_ROWS, **options
         )
 
     return Prepared(launch, c)
