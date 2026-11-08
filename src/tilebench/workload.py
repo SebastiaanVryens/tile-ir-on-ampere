@@ -6,6 +6,8 @@ from typing import Any, NamedTuple, Protocol
 
 import torch
 
+from tilebench.system import MAX_START_TEMP_C
+
 Size = tuple[int, ...]
 Config = dict[str, Any]
 Inputs = tuple[torch.Tensor, ...]
@@ -43,3 +45,5 @@ class Workload:
     rate_scale: float
     rtol: float
     atol: float
+    # Each burst waits until the GPU is at this temperature or below.
+    max_start_temp_c: int = MAX_START_TEMP_C

@@ -26,6 +26,11 @@ GROUP_ROWS = 8
 # Descriptors need 16-byte aligned rows, which is 8 fp16 elements.
 DESCRIPTOR_ALIGNMENT = 8
 
+# Tensor cores reach the power limit within a second, and the chip jumps about 18 C. From
+# 70 C, 5 s bursts at 8192 reached 87 C and slowed for heat once the heatsink was warm.
+# From 60 C they peaked at 85 C, limited by power alone.
+START_TEMP_C = 60
+
 
 def make_inputs(size: Size) -> Inputs:
     m, n, k = size
@@ -69,4 +74,5 @@ WORKLOAD = Workload(
     # tight enough to catch a kernel that accumulates in fp16.
     rtol=1e-3,
     atol=1e-2,
+    max_start_temp_c=START_TEMP_C,
 )

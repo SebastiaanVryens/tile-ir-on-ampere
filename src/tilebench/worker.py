@@ -9,8 +9,9 @@ ones listed in --plan. Results go to --out.
 import argparse
 import importlib
 import json
+import time
 from collections import defaultdict
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,8 +20,8 @@ import torch
 from tilebench.artifacts import config_slug, inspect_build
 from tilebench.system import MAX_START_TEMP_C, gpu_state, wait_until_cool
 from tilebench.targets import Target, get_target
-from tilebench.timing import REPEATS, Timer, burst_length
-from tilebench.workload import Config, Impl, Prepared, Size, Workload
+from tilebench.timing import REPEATS, Timer, burst_has_room
+from tilebench.workload import Config, Impl, Inputs, Prepared, Size, Workload
 
 
 def load_workload(name: str) -> Workload:
@@ -78,9 +79,26 @@ def by_size(plan: Iterable[tuple[Sequence[int], Config]]) -> dict[Size, list[Con
     return groups
 
 
-def bursts(configs: Sequence[Config], length: int) -> Iterator[Sequence[Config]]:
-    for start in range(0, len(configs), length):
-        yield configs[start : start + length]
+def start_limit(workload: Workload, requested: int) -> int:
+    """Return the start temperature: the cooler of the request and the workload's own."""
+    return min(requested, workload.max_start_temp_c)
+
+
+def timed_burst(
+    timer: Timer, impl: Impl, inputs: Inputs, configs: Sequence[Config], repeats: int
+) -> list[list[float]]:
+    """Time configs from the front of the list for as long as the burst has room."""
+    timings: list[list[float]] = []
+    start = time.perf_counter()
+    last_kernel_s = 0.0
+    for config in configs:
+        elapsed_s = time.perf_counter() - start
+        if not burst_has_room(len(timings) * repeats, elapsed_s, last_kernel_s, repeats):
+            break
+        before = time.perf_counter()
+        timings.append(timer.gpu_ms(impl.prepare(inputs, config).launch, repeats))
+        last_kernel_s = time.perf_counter() - before
+    return timings
 
 
 def bench(
@@ -99,10 +117,12 @@ def bench(
             verified(workload, impl, target, size, config)
 
         inputs = workload.make_inputs(size)
-        for burst in bursts(configs, burst_length(repeats)):
+        pending = list(configs)
+        while pending:
             start_temp = wait_until_cool(max_temp)
-            timer.warm_up(impl.prepare(inputs, burst[0]).launch)
-            timings = [timer.gpu_ms(impl.prepare(inputs, c).launch, repeats) for c in burst]
+            timer.warm_up(impl.prepare(inputs, pending[0]).launch)
+            timings = timed_burst(timer, impl, inputs, pending, repeats)
+            burst, pending = pending[: len(timings)], pending[len(timings) :]
             # Only read here, because querying the GPU inside a burst would slow its clocks.
             state = gpu_state()
             records += [
@@ -163,7 +183,12 @@ def main() -> None:
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--plan", type=json.loads, help="JSON list of [size, config] pairs")
     parser.add_argument("--repeats", type=int, default=REPEATS)
-    parser.add_argument("--max-temp", type=int, default=MAX_START_TEMP_C)
+    parser.add_argument(
+        "--max-temp",
+        type=int,
+        default=MAX_START_TEMP_C,
+        help="start bursts at or below this; a workload can ask for cooler",
+    )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
@@ -180,7 +205,8 @@ def main() -> None:
         args.out.write_text(json.dumps(records))
     else:
         plan = full_sweep(workload, impl, target) if args.plan is None else args.plan
-        records = bench(workload, impl, target, plan, args.repeats, args.max_temp)
+        max_temp = start_limit(workload, args.max_temp)
+        records = bench(workload, impl, target, plan, args.repeats, max_temp)
         args.out.write_text(json.dumps(records))
 
 

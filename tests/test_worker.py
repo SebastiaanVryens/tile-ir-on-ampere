@@ -1,9 +1,47 @@
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from tilebench import worker
+from tilebench.kernels import gemm, layernorm
 from tilebench.targets import get_target
-from tilebench.worker import bursts, by_size, require_backend, selected
+from tilebench.worker import by_size, require_backend, selected, start_limit, timed_burst
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class FakeTimer:
+    """Advances the clock by a fixed kernel time instead of running anything."""
+
+    def __init__(self, clock: FakeClock, kernel_s: float) -> None:
+        self.clock = clock
+        self.kernel_s = kernel_s
+
+    def gpu_ms(self, launch: Any, repeats: int) -> list[float]:
+        self.clock.now += self.kernel_s
+        return [self.kernel_s * 1e3 / repeats] * repeats
+
+
+def burst_sizes(monkeypatch: pytest.MonkeyPatch, kernel_s: float, configs: int) -> list[int]:
+    """Return how many configs land in each burst."""
+    clock = FakeClock()
+    monkeypatch.setattr(worker.time, "perf_counter", clock)
+    impl: Any = SimpleNamespace(prepare=lambda inputs, config: SimpleNamespace(launch=None))
+    timer: Any = FakeTimer(clock, kernel_s)
+    pending: list[dict[str, Any]] = [{"block": block} for block in range(configs)]
+    sizes = []
+    while pending:
+        timings = timed_burst(timer, impl, (), pending, 100)
+        sizes.append(len(timings))
+        pending = pending[len(timings) :]
+    return sizes
 
 
 def compiled_on(backend: str) -> SimpleNamespace:
@@ -30,9 +68,26 @@ def test_plans_group_by_size_in_order() -> None:
     assert list(by_size(plan)) == [(2, 1024), (4, 512)]
 
 
-def test_bursts_cover_every_config_once() -> None:
-    configs = [{"block": block} for block in range(5)]
-    assert list(bursts(configs, 2)) == [configs[0:2], configs[2:4], configs[4:5]]
+def test_short_kernels_share_bursts_up_to_the_launch_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert burst_sizes(monkeypatch, kernel_s=0.05, configs=14) == [6, 6, 2]
+
+
+def test_long_kernels_get_a_burst_each(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert burst_sizes(monkeypatch, kernel_s=4.0, configs=3) == [1, 1, 1]
+
+
+def test_gemm_starts_cooler_than_requested() -> None:
+    assert start_limit(gemm.WORKLOAD, 70) == gemm.START_TEMP_C
+
+
+def test_other_workloads_keep_the_requested_start() -> None:
+    assert start_limit(layernorm.WORKLOAD, 70) == 70
+
+
+def test_a_cooler_request_wins() -> None:
+    assert start_limit(gemm.WORKLOAD, 50) == 50
 
 
 def test_style_filter_matches_part_of_the_style() -> None:

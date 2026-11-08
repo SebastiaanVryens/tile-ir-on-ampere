@@ -20,15 +20,27 @@ FULL_WARMUP_S = 0.75
 # A burst has to end before the GPU overheats, so this bounds it in launches.
 LAUNCHES_PER_BURST = 640
 
+# Long kernels need a bound in time as well, because 640 launches of an 8192 GEMM take 26 s.
+# Under that load from 60 C, kernel time drifted 1.4% in the first 5 s, and the GPU slowed
+# for heat after about 30 s. The kernels of the other workloads never come near this bound.
+MAX_BURST_S = 5.0
+
 # Untimed launches before each kernel, which load its code onto the GPU.
 SETTLE_LAUNCHES = 3
 
 REPEATS = 100
 
 
-def burst_length(repeats: int) -> int:
-    """Return how many kernels fit in one burst at this many repeats each."""
-    return max(1, LAUNCHES_PER_BURST // repeats)
+def burst_has_room(launches: int, elapsed_s: float, last_kernel_s: float, repeats: int) -> bool:
+    """Return whether one more kernel of `repeats` launches fits in the current burst.
+
+    The next kernel is assumed to take as long as the last one. A burst always holds at
+    least one kernel.
+    """
+    if launches == 0:
+        return True
+    within_launches = launches + repeats <= LAUNCHES_PER_BURST
+    return within_launches and elapsed_s + last_kernel_s <= MAX_BURST_S
 
 
 class Timer:

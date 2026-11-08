@@ -67,7 +67,12 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--targets", nargs="+", default=[target.name for target in TARGETS])
     parser.add_argument("--workloads", nargs="+", default=list(WORKLOAD_NAMES))
-    parser.add_argument("--max-temp", type=int, default=MAX_START_TEMP_C)
+    parser.add_argument(
+        "--max-temp",
+        type=int,
+        default=MAX_START_TEMP_C,
+        help="start bursts at or below this; a workload can ask for cooler",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("results"))
     args = parser.parse_args()
 
