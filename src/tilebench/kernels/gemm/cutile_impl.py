@@ -21,6 +21,21 @@ ZERO = ct.PaddingMode.ZERO
 # None sends no hint, as in layernorm, where it was not always the same as any value.
 LATENCIES = (None, *LATENCY_HINTS)
 
+# The warp count cuTile chose by itself for every tile we inspected.
+COMPILER_WARPS = 4
+
+
+def worker_warps(tutorial_warps: int) -> int | None:
+    """Return the warp count to request, or None to leave the choice to the compiler.
+
+    Only tiles that the tutorial gives more warps than the compiler's choice get a request.
+    On 128x256x64 the compiler's 4 warps left each thread a 256-register fp32 accumulator,
+    so it spilled 1112 bytes and ran at 6.6 TFLOPS at 4096, where 8 warps ran at 22.9 with
+    no spill. On 128x128x32 the compiler's choice gave the same code as 4 warps. Requests
+    below 4 need tileiras 13.5, so the 2-warp tiles keep the compiler's choice as well.
+    """
+    return tutorial_warps if tutorial_warps > COMPILER_WARPS else None
+
 
 def block_position(m, n, tile_m, tile_n, group):
     """Return the output tile of this block, walking bands of `group` block rows."""
@@ -63,19 +78,20 @@ def gemm_body(latency: int | None) -> Callable[..., None]:
 
 
 @functools.cache
-def build_kernel(occupancy: int, latency: int | None) -> Any:
-    """Build each variant once, because every new kernel object compiles again.
-
-    The warp count is left to the compiler. The tutorial's counts belong to Triton's code
-    generation, and on 128x128x32 the compiler's choice gave the same code as 4 warps.
-    """
-    return ct.kernel(gemm_body(latency), occupancy=occupancy)
+def build_kernel(occupancy: int, latency: int | None, num_worker_warps: int | None) -> Any:
+    """Build each variant once, because every new kernel object compiles again."""
+    return ct.kernel(gemm_body(latency), occupancy=occupancy, num_worker_warps=num_worker_warps)
 
 
 def configs(backend: str, size: Size) -> tuple[Config, ...]:
     return tuple(
-        {**tile_fields(tile_m, tile_n, tile_k), "occupancy": occupancy, "latency": latency}
-        for tile_m, tile_n, tile_k, _ in TUTORIAL_TILES
+        {
+            **tile_fields(tile_m, tile_n, tile_k),
+            "num_worker_warps": worker_warps(warps),
+            "occupancy": occupancy,
+            "latency": latency,
+        }
+        for tile_m, tile_n, tile_k, warps in TUTORIAL_TILES
         for occupancy in OCCUPANCIES
         for latency in LATENCIES
     )
@@ -86,7 +102,7 @@ def prepare(inputs: Inputs, config: Config) -> Prepared:
     m = a.shape[0]
     n = b.shape[1]
     c = torch.empty(m, n, device=a.device, dtype=a.dtype)
-    kernel = build_kernel(config["occupancy"], config["latency"])
+    kernel = build_kernel(config["occupancy"], config["latency"], config["num_worker_warps"])
     tile_m, tile_n, tile_k = config["tile_m"], config["tile_n"], config["tile_k"]
     grid = (ct.cdiv(m, tile_m) * ct.cdiv(n, tile_n), 1, 1)
     args = (a, b, c, tile_m, tile_n, tile_k, GROUP_ROWS)

@@ -48,6 +48,12 @@ def test_triton_uses_the_tutorial_warps() -> None:
             assert config["num_warps"] == warps[tile_of(config)]
 
 
+def test_cutile_asks_for_warps_only_on_the_tile_that_spilled() -> None:
+    for config in cutile_impl.configs("cutile", ALIGNED):
+        expected = 8 if tile_of(config) == (128, 256, 64) else None
+        assert config["num_worker_warps"] == expected
+
+
 def test_ptx_pipelines_fit_in_shared_memory() -> None:
     for config in triton_impl.configs("cuda", ALIGNED):
         size = triton_impl.pipeline_bytes(*tile_of(config), config["num_stages"])
