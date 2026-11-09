@@ -16,8 +16,8 @@ FLOAT16_BYTES = 2
 
 # The Ampere matmul configurations of the Triton tutorial, numbers 1 to 8 and the 64-deep
 # tiles 14 to 16 (python/tutorials/03-matrix-multiplication.py). A published list keeps the
-# choice of tiles out of the comparison. Only Triton uses the warp counts, which are the
-# tutorial's own pairing for each tile.
+# choice of tiles out of the comparison. The warp counts are the tutorial's own pairing for
+# each tile. Triton uses all of them, and cuTile only those above its own choice of 4.
 TUTORIAL_TILES = (
     # tile_m, tile_n, tile_k, num_warps
     (128, 256, 64, 8),
