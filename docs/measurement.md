@@ -4,7 +4,7 @@
 
 `python -m tilebench` has two stages. Tuning times every configuration briefly and keeps the fastest one for each variant and size. Three rounds then measure only those winners, so the reported numbers do not come from the timings that picked them. Each reported value is the median of 300 launches.
 
-Every configuration is checked against PyTorch before it is timed, and the L2 cache is cleared before each launch. A laptop GPU needs two more precautions:
+Every configuration is checked against PyTorch before it is timed, and the L2 cache is cleared before each launch. A laptop GPU needs three more precautions:
 
 - **Continuous load.** Clocks only stay up under steady load. Timing one kernel at a time with about 100 ms gaps ran near 580 MHz and read up to 2.5x too slow. So kernels are compiled and checked first, then timed in bursts: one 0.75 s warmup, then launches back to back.
 - **A cool start.** The median SM clock holds at 1950 MHz up to 82 C, then falls to 1575 MHz at 86 C. Each burst waits until the GPU is at 70 C or below.
